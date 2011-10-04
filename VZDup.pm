@@ -1100,7 +1100,7 @@ else {
     my $cmd = "(";
 #    $cmd .= "duplicity cleanup $dupopts $opts->{destination};";
 #    $cmd .= "duplicity $dupopts --encrypt-key $opts->{key} $snapdir $opts->{destination}";
-    $cmd .= "duplicity $dupopts $snapdir $opts->{destination}/$vmid";
+    $cmd .= "duplicity --allow-source-mismatch $dupopts $snapdir $opts->{destination}/$vmid";
 
     $cmd .= ")";
     
