@@ -1,0 +1,9 @@
+Package: vzdup
+Version: @@VERSION@@-@@PKGRELEASE@@
+Section: admin
+Priority: optional
+Architecture: @@ARCH@@
+Depends: vzdump duplicity
+Maintainer: yoonique[.net]
+Description: OpenVZ backup scripts
+ This package contains the vzdup and vzduprestore scripts to backup and restore openvz images with duplicity.

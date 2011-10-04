@@ -1,0 +1,196 @@
+#!/usr/bin/perl -w
+#
+#    vzduprestore
+#
+#    Copyright (C) 2011 yoonique[.net]
+#
+#    Copyright: vzduprestore is under GNU GPL, the GNU General Public License.
+#
+#    This program is free software; you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation; version 2 dated June, 1991.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program; if not, write to the
+#    Free Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston,
+#    MA 02110-1301, USA.
+#
+#    Based on proxmox's vzrestore:
+#      Copyright (C) 2007-2009 Proxmox Server Solutions GmbH
+#      Author: Dietmar Maurer <dietmar@proxmox.com>
+
+use strict;
+use Getopt::Long;
+use Sys::Syslog;
+use File::Path;
+use PVE::VZDump;
+use PVE::VZDump::OpenVZ;
+
+$ENV{LANG} = "C"; # avoid locale related issues/warnings
+
+openlog ('vzdup', 'cons,pid', 'daemon');
+
+my $force = 0;
+
+sub print_usage {
+    my $msg = shift;
+
+    print STDERR "ERROR: $msg\n\n" if $msg;
+
+    print STDERR "usage: $0 [OPTIONS] <RESTORE-TIME> <GPGKEY> <ARCHIVE> <VMID>\n";
+    print STDERR "\n";
+    print STDERR "\t--force      overwrite existing conf file, private and root directory\n\n";
+}
+
+if (!GetOptions ('force' => \$force)) {
+    print_usage ();
+    exit (-1);
+}
+
+if ($#ARGV != 3) {
+    print_usage ();
+    exit (-1);
+} 
+
+my $restoretime = shift;
+my $key = shift;
+my $archive = shift;
+
+my $vmid = PVE::VZDump::check_vmids ((shift))->[0];
+
+$SIG{INT} = $SIG{TERM} = $SIG{QUIT} = $SIG{HUP} = $SIG{PIPE} = sub {
+    die "interrupted by signal\n";
+};
+
+sub debugmsg { PVE::VZDump::debugmsg (@_); } # just a shortcut
+
+sub run_command { PVE::VZDump::run_command (undef, @_); } # just a shortcut
+
+sub restore_openvz {
+    my ($archive, $vmid) = @_;
+
+    my $vzconf =  PVE::VZDump::OpenVZ::read_global_vz_config ();
+    my $cfgdir = PVE::VZDump::OpenVZ::VZDIR . "/conf";
+
+    my $conffile = "$cfgdir/${vmid}.conf";
+    my $private = $vzconf->{privatedir};
+    $private =~ s/\$VEID/$vmid/;
+    my $root = $vzconf->{rootdir};
+    $root =~ s/\$VEID/$vmid/;
+
+    print "you choose to force overwriting VPS config file, private and root directories.\n" if $force;
+
+    die "unable to restore VM '$vmid' - VM already exists\n"
+	if !$force && -f $conffile;              ;
+ 
+    die "unable to restore VPS '${vmid}' - " .
+    	"directory '$private' already exists\n"
+	if !$force && -d $private;
+   
+    die "unable to restore VPS '${vmid}' - " .
+	"directory '$root' already exists\n"
+	if !$force && -d $root;
+
+    eval {
+	mkpath $private || die "unable to create private dir '$private'";
+	mkpath $root || die "unable to create private dir '$private'";
+
+#	my $cmd = "tar xpf $archive --totals --sparse -C $private";
+	my $cmd = "duplicity -v4 --restore-time $restoretime --encrypt-key $key $archive $private";
+	debugmsg ('info', "executing $cmd");
+
+
+	if ($archive eq '-') {
+	    debugmsg ('info', "extracting archive from STDIN");
+	    run_command ($cmd, input => "<&STDIN");
+	} else {
+	    debugmsg ('info', "extracting archive '$archive'");
+	    run_command ($cmd);
+	}
+
+	debugmsg ('info', "extracting configuration to '$conffile'");
+
+	my $qroot = $vzconf->{rootdir};
+	$qroot =~ s|/|\\\/|g;
+	my $qprivate = $vzconf->{privatedir};
+	$qprivate =~ s|/|\\\/|g;
+
+	my $scmd = "sed -r -e 's/VE_ROOT=.*/VE_ROOT=\\\"$qroot\\\"/' -e 's/VE_PRIVATE=.*/VE_PRIVATE=\\\"$qprivate\\\"/' -e 's/host_ifname=veth[0-9]+\./host_ifname=veth${vmid}./' <'$private/etc/vzdump/vps.conf' >'$conffile'";
+
+	run_command ($scmd);
+
+	foreach my $s (PVE::VZDump::OpenVZ::SCRIPT_EXT) {
+	    my $tfn = "$cfgdir/${vmid}.$s";
+	    my $sfn = "$private/etc/vzdump/vps.$s";
+	    if (-f $sfn) {
+		run_command ("cp '$sfn' '$tfn'");
+	    }
+	}
+
+	rmtree "$private/etc/vzdump";
+    };
+
+    my $err = $@;
+
+    if ($err) {
+	rmtree $private;
+	rmtree $root;
+	unlink $conffile;
+	die $err;
+    }
+}
+
+my $plugin = PVE::VZDump::OpenVZ->new();
+
+my $lock = $plugin->lock_vm ($vmid);
+
+eval {
+    debugmsg ('info', "restore openvz backup '$archive' using ID $vmid", undef, 1);
+    restore_openvz ($archive, $vmid);
+    debugmsg ('info', "restore openvz backup '$archive' successful", undef, 1);
+};
+my $err = $@;
+
+$plugin->unlock_vm ($vmid);
+
+if ($err) {
+    debugmsg ('err', "restore openvz backup '$archive' failed - $err", undef, 1);
+    exit (-1);
+}
+
+exit (0);
+
+__END__
+
+=head1 NAME
+                                          
+vzduprestore - restore OpenVZ vzdup backups
+
+=head1 SYNOPSIS
+
+vzduprestore <RESTORE-TIME> <GPGKEY> <ARCHIVE> <VMID>
+
+=head1 DESCRIPTION
+
+Restore the OpenVZ vzdup backup <archive> that is least <RESTORE-TIME> old to virtual machine <VMID>. Use <GPGKEY> to decrypt the backup.
+
+
+=head1 EXAMPLES
+
+> vzduprestore 0h C0B42381 ssh://myhost/201 201
+
+Restore the latest backup of container 201 and and create container 201
+
+> vzduprestore 1D C0B42381 ssh://myhost/201 202
+
+Restore the latest backup of container 201 that is one day old and and create container 202
+
+
+=head1 SEE ALSO
+
+    vzdup(1)

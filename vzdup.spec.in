@@ -1,0 +1,45 @@
+Name: vzdup
+Vendor: yoonique[.net]
+Packager: yoonique[.net] <http://www.yoonique.net>
+Version: @@VERSION@@
+Release: @@PKGRELEASE@@
+BuildArch: noarch
+BuildPreReq: perl
+Requires: vzdump duplicity
+Summary: OpenVZ backup scripts
+BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root
+URL: http://www.yoonique.net
+Source: %{name}-%{version}.tar.gz
+License: GPL
+Group: Utilities
+
+%description
+This package contains the vzdup and vzduprestore scripts to backup and restore openvz images with duplicity.
+
+%prep
+%setup
+
+%install
+rm -rf $RPM_BUILD_ROOT
+make DESTDIR=$RPM_BUILD_ROOT install
+
+%clean
+rm -rf $RPM_BUILD_ROOT
+
+%files
+%defattr(-,root,root)
+%attr(755,root,root) %_sbindir/vzdup
+%attr(755,root,root) %_sbindir/vzduprestore
+%attr(644,root,root) %_mandir/man1/vzdup.1.*
+%attr(644,root,root) %_mandir/man1/vzduprestore.1.*
+%attr(644,root,root) /usr/share/perl5/PVE/VZDup.pm
+
+%changelog
+* Thu Aug  25 2011 yoonique[.net] 0.9
+- vzdup, vzduprestore initial release
+* Thu Sep  3 2007 Dietmar Maurer <dietmar@proxmox.com> 1.2-1
+- added Vendor and Packager tags
+* Tue Mar 22 2007 Dietmar Maurer <dietmar@proxmox.com> 0.3-1
+- added Vendor and Packager tags
+* Tue Mar 20 2007 Kir Kolyshkin <kir@openvz.org> 0.3-1
+- created spec file

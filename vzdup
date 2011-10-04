@@ -1,0 +1,335 @@
+#!/usr/bin/perl -w
+#
+#    vzdup
+#
+#    Copyright (C) 2011 yoonique[.net]
+#
+#    Copyright: vzdup is under GNU GPL, the GNU General Public License.
+#
+#    This program is free software; you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation; version 2 dated June, 1991.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program; if not, write to the
+#    Free Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston,
+#    MA 02110-1301, USA.
+#
+#    Based on proxmox's vzdump:
+#      Copyright (C) 2007-2009 Proxmox Server Solutions GmbH
+#      Author: Dietmar Maurer <dietmar@proxmox.com>
+#
+
+use strict;
+use Getopt::Long;
+use Sys::Syslog;
+use PVE::VZDup;
+
+$ENV{LANG} = "C"; # avoid locale related issues/warnings
+
+# by default we set --rsyncable for gzip
+$ENV{GZIP} = "--rsyncable" if !$ENV{GZIP};
+
+# just to be sure that we have a resonable path
+$ENV{PATH} = "/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin";
+
+my $cmdline = join (' ', 'vzdup', @ARGV);
+
+openlog ('vzdup', 'cons,pid', 'daemon');
+
+$SIG{INT} = $SIG{TERM} = $SIG{QUIT} = $SIG{HUP} = $SIG{PIPE} = sub {
+    die "interrupted by signal\n";
+};
+
+my @std_opts = (
+		'all',
+		'exclude=s@',
+#		'exclude-path=s@',
+#		'stdexcludes',
+#		'compress',
+		'mailto=s@',
+#		'quiet',
+#		'snapshot',
+		'fullifolderthan=s',
+		'destination=s',
+		'verbosity=i',
+		'volsize=i',
+		'gpgkey=s',
+		'stop',
+		'start',
+		'size=i',
+#		'node=i',
+#		'bwlimit=i',
+		'ionice=i',
+		'stopwait=i',
+#		'tmpdir=s',
+#		'dumpdir=s',
+#		'maxfiles=i',
+#		'script=s',
+#		'storage=s',
+#                'stdout',
+		);
+
+sub print_usage {
+    my $msg = shift;
+
+    print STDERR "ERROR: $msg\n\n" if $msg;
+
+    print STDERR "\nusage: $0 OPTIONS [--all | VMID]\n\n";
+
+    print STDERR "\tTHIS IS BETA SOFTWARE. DO NOT USE FOR PRODUCTION OR OTHER CRITICAL AREAS\n";
+    print STDERR "\tUSE AT YOUR OWN RISK. DATA LOSS OR SYSTEM LOSS IS POSSIBLE\n\n";
+    print STDERR "\t--exclude VMID\t\texclude VMID (assumes --all)\n\n";
+
+    print STDERR "\t--stop\t\t\tstop VM before snapshot\n";
+    print STDERR "\t--start\t\t\tstart VM after snapshot\n";
+    print STDERR "\t--stopwait MINUTES\tmaximal time to wait until a VM is stopped\n\n";
+
+    print STDERR "\t--fullifolderthan time\tFull backup if latest full backup in the collection is older than the given time\n";
+    print STDERR "\t--verbosity number\tSpecify verbosity level (0 is total silent, 4 is the default, and 9 is noisiest)\n";
+    print STDERR "\t--volsize number\tChange the volume size to number Mb. Default is 25Mb\n";
+    print STDERR "\t--gpgkey key id \t\tWhen backing up, encrypt and sign with given GnuPG key\n\n";
+#    print STDERR "\t--exclude-path REGEX\texclude certain files/directories\n";     print STDERR "\t--stdexcludes\t\texclude temorary files and logs\n\n";
+ 
+#    print STDERR "\t--compress\t\tcompress dump file (gzip)\n";
+#    print STDERR "\t--dumpdir DIR\t\tstore resulting files in DIR\n";
+#    print STDERR "\t--maxfiles N\t\tmaximal number of backup files per VM\n";
+#    print STDERR "\t--script FILENAME\texecute hook script\n"; 
+#    print STDERR "\t--stdout write to stdout, not to a file\n"; 
+#    print STDERR "\t--storage STORAGE_ID\tstore resulting files to STORAGE_ID (PVE only)\n";
+    print STDERR "\t--tmpdir DIR\t\tstore temporary files in DIR\n";
+    print STDERR "\t--mailto EMAIL\t\tsend notification mail to EMAIL.\n";
+    print STDERR "\t--quiet\t\t\tbe quiet.\n";
+    print STDERR "\t--size MB\t\tLVM snapshot size\n";
+
+#    print STDERR "\t--node CID\t\tonly run on pve cluster node CID\n";
+#    print STDERR "\t--bwlimit KBPS\t\tlimit I/O bandwidth; KBytes per second\n";
+    print STDERR "\t--ionice PRI\t\tset ionice priority (0-8)\n\n";
+
+    print STDERR "\n";
+}
+
+my $opts = {};
+if (!GetOptions ($opts, @std_opts)) {
+    print_usage ();
+    exit (-1);
+}
+
+if ($opts->{node}) {
+    PVE::VZDup::check_bin ('pveca');
+
+    my $info = `pveca -i`;
+    chomp $info;
+    die "unable to parse pveca info" if $info !~ m/^(\d+)\s+\S+\s+\S+\s+\S+$/;
+    my $cid = $1;
+
+    # silent exit if we run on wrong node
+    exit (0) if $cid != $opts->{node};
+}
+
+$opts->{all} = 1 if $opts->{exclude};
+
+if ($opts->{all} && $#ARGV >= 0) {
+    print_usage ();
+    exit (-1);
+} 
+
+if (!$opts->{all} && $#ARGV == -1) {
+    print_usage ();
+    exit (-1);
+}
+
+open STDOUT, '>/dev/null' if $opts->{quiet} && !$opts->{stdout};
+open STDERR, '>/dev/null' if $opts->{quiet};
+
+# if ($opts->{stdout}) {
+# 
+#     open my $saved_stdout, ">&STDOUT"
+# 	|| die "can't dup STDOUT: $!\n";
+# 
+#     open STDOUT, '>&STDERR' ||
+# 	die "unable to redirect STDOUT: $!\n";
+# 
+#     $opts->{stdout} = $saved_stdout;
+# 
+#     die "you can only backup a single VM with option --stdout\n"
+# 	if scalar(@ARGV) != 1;
+# }
+
+$opts->{vmids} = PVE::VZDup::check_vmids (@ARGV) if !$opts->{all};
+
+$opts->{exclude} =  PVE::VZDup::check_vmids (@{$opts->{exclude}}) if $opts->{exclude};
+
+my $vzdup = PVE::VZDup->new ($cmdline, $opts);
+
+$vzdup->getlock (); # only one process allowed
+
+# parameters are OK - now start real work and log everything
+
+eval {
+    if (defined($opts->{ionice})) {
+	if ($opts->{ionice} > 7) {
+	    PVE::VZDup::run_command (undef, "ionice -c3 -p $$");
+	} else {
+	    PVE::VZDup::run_command (undef, "ionice -c2 -n$opts->{ionice} -p $$");
+	}
+    }
+    $vzdup->exec_backup(); 
+};
+my $err = $@;
+
+if ($err) {
+    PVE::VZDup::debugmsg ('err', $err, undef, 1);
+    exit (-1);
+}
+
+exit 0;
+
+__END__
+
+=head1 NAME
+                                          
+vzdup - backup utility for virtual machine
+
+=head1 SYNOPSIS
+
+vzdup OPTIONS [--all | <VMID>]
+
+THIS IS BETA SOFTWARE. DO NOT USE FOR PRODUCTION OR OTHER CRITICAL AREAS
+USE AT YOUR OWN RISK. DATA LOSS OR SYSTEM LOSS IS POSSIBLE
+
+--exclude VMID          exclude VMID (assumes --all)
+
+--stop                  stop VM before snapshot
+
+--start                 start VM after snapshot
+
+--stopwait MINUTES      maximal time to wait until a VM is stopped
+
+
+--fullifolderthan time  Full backup if latest full backup in the collection is older than the given time
+
+--verbosity number      Specify verbosity level (0 is total silent, 4 is the default, and 9 is noisiest)
+
+--volsize number        Change the volume size to number Mb. Default is 25Mb
+
+--gpgkey key id         When backing up, encrypt and sign with given GnuPG key
+
+--tmpdir DIR            store temporary files in DIR
+
+--mailto EMAIL          send notification mail to EMAIL.
+
+--quiet                 be quiet.
+
+--size MB               LVM snapshot size
+
+--ionice PRI            set ionice priority (0-8)
+
+
+=head1 DESCRIPTION
+
+vzdup is an utility to make consistent snapshots of running virtual
+machines (VMs) and backup them with duplicity.
+
+It is based on vzdump, but does only snapshots 
+There is no downtime, but snapshot mode
+needs LVM2 and some free space on the corresponding volume group to
+create the LVM snapshot.
+
+=back 
+
+=head1 RESTORE
+
+The resulting tar files can be restored with the following programs.
+
+=over 1
+
+=item vzduprestore: OpenVZ restore utility
+
+=back
+
+For details see the corresponding manual pages.
+
+=head1 CONFIGURATION
+
+Global configuration is stored in /etc/vzdup.conf. 
+
+ tmpdir: DIR
+ storage: STORAGE_ID
+ verbosity: NUMBER
+ volsize: NUMBER
+ fullifolderthan: duplicity time string
+ ionize: PRI
+ stopwait: MINUTES 
+ size: MB
+
+=head1 HOOK SCRIPT
+
+Configuration files are also stored inside the backup archive (/etc/vzdup), and will be correctly restored.
+
+=head1 LIMITATIONS
+
+VZDup does not save ACLs. And duplicity limitations apply as well.
+
+=head1 EXAMPLES
+
+> vzdup --gpgkey C0B42381 --destination ssh://myhost 201
+
+Snapshot container 201 and copy encrypted backup to destination myhost subfolder 201. Backups are incremental, but do a full backup every once a week.
+
+> vzdup --gpgkey C0B42381 --destination ssh://myhost -all
+
+same as above, but for all containers
+
+> vzdup --stop --start --gpgkey C0B42381 --volsize 600 --fullifolderthan 2W --verbosity 4 --destination ssh://myhost/backup --mailto root 201
+
+Stop, snapshot and restart container 201. Copy encrypted backup to destination myhost subfolder backup/201. Backups are incremental, but do a full backup every other week. Duplicity volume size is 600MB. Mail a summary to user root.
+
+
+> vzduprestore 0h C0B42381 ssh://myhost/201 201
+
+Restore the latest backup of container 201 and create container 201
+
+> vzduprestore 1D C0B42381 ssh://myhost/201 202
+
+Restore the latest backup of container 201 that is one day old and create container 202
+
+
+=head1 SEE ALSO
+
+    vzduprestore
+
+=head1 AUTHOR
+
+yoonique[.net]
+
+=head1 COPYRIGHT AND DISCLAIMER
+
+Copyright (C) 2011 yoonique[.net]
+
+Copyright: vzdup is under GNU GPL, the GNU General Public License.
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation; version 2 dated June, 1991.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the
+Free Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston,
+MA 02110-1301, USA.
+
+
+    Based on proxmox's vzdump:
+      Copyright (C) 2007-2009 Proxmox Server Solutions GmbH
+      Author: Dietmar Maurer <dietmar@proxmox.com>
+
