@@ -1090,11 +1090,17 @@ if($opts->{volsize}) {
 if($opts->{fullifolderthan}) {
     $dupopts .= "--full-if-older-than $opts->{fullifolderthan} ";
 }
+if($opts->{gpgkey}) {
+	$dupopts .= "--encrypt-key $opts->{gpgkey} --sign-key $opts->{gpgkey} ";
+}
+else {
+	$dupopts .= "--no-encryption "
+}
 
     my $cmd = "(";
 #    $cmd .= "duplicity cleanup $dupopts $opts->{destination};";
 #    $cmd .= "duplicity $dupopts --encrypt-key $opts->{key} $snapdir $opts->{destination}";
-    $cmd .= "duplicity $dupopts --encrypt-key $opts->{gpgkey} --sign-key $opts->{gpgkey} $snapdir $opts->{destination}/$vmid";
+    $cmd .= "duplicity $dupopts $snapdir $opts->{destination}/$vmid";
 
     $cmd .= ")";
     
