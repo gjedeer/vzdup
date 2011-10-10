@@ -107,7 +107,14 @@ sub restore_openvz {
 	my $cmd = "duplicity --no-encryption -v4 --restore-time $restoretime $archive $private";
 	debugmsg ('info', "executing $cmd");
 
-	move($private, $private . '_dup');
+	if(-d $private)
+	{
+		if(-d $private . '_dup')
+		{
+			rmtree($private . '_dup');
+		}
+		move($private, $private . '_dup');
+	}
 
 
 	if ($archive eq '-') {
