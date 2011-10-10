@@ -30,6 +30,7 @@ use Sys::Syslog;
 use File::Path;
 use PVE::VZDump;
 use PVE::VZDump::OpenVZ;
+use PVE::VZDup;
 
 $ENV{LANG} = "C"; # avoid locale related issues/warnings
 
@@ -42,8 +43,9 @@ sub print_usage {
 
     print STDERR "ERROR: $msg\n\n" if $msg;
 
-    print STDERR "usage: $0 [OPTIONS] <RESTORE-TIME> <GPGKEY> <ARCHIVE> <VMID>\n";
+    print STDERR "usage: $0 [OPTIONS] <RESTORE-TIME> <VMID>\n";
     print STDERR "\n";
+	print STDERR 
     print STDERR "\t--force      overwrite existing conf file, private and root directory\n\n";
 }
 
@@ -52,16 +54,16 @@ if (!GetOptions ('force' => \$force)) {
     exit (-1);
 }
 
-if ($#ARGV != 3) {
+
+if ($#ARGV != 1) {
     print_usage ();
     exit (-1);
 } 
 
 my $restoretime = shift;
-my $key = shift;
-my $archive = shift;
 
 my $vmid = PVE::VZDump::check_vmids ((shift))->[0];
+my $archive = PVE::VZDup::read_vzdup_defaults()->{destination} . '/' . $vmid;
 
 $SIG{INT} = $SIG{TERM} = $SIG{QUIT} = $SIG{HUP} = $SIG{PIPE} = sub {
     die "interrupted by signal\n";
@@ -101,7 +103,7 @@ sub restore_openvz {
 	mkpath $root || die "unable to create private dir '$private'";
 
 #	my $cmd = "tar xpf $archive --totals --sparse -C $private";
-	my $cmd = "duplicity -v4 --restore-time $restoretime --encrypt-key $key $archive $private";
+	my $cmd = "duplicity --no-encryption -v4 --restore-time $restoretime $archive $private";
 	debugmsg ('info', "executing $cmd");
 
 
@@ -120,19 +122,22 @@ sub restore_openvz {
 	my $qprivate = $vzconf->{privatedir};
 	$qprivate =~ s|/|\\\/|g;
 
-	my $scmd = "sed -r -e 's/VE_ROOT=.*/VE_ROOT=\\\"$qroot\\\"/' -e 's/VE_PRIVATE=.*/VE_PRIVATE=\\\"$qprivate\\\"/' -e 's/host_ifname=veth[0-9]+\./host_ifname=veth${vmid}./' <'$private/etc/vzdump/vps.conf' >'$conffile'";
+	# If found a backup of VPS conf file, restore it too
+	if (-f "$private/etc/vzdump/vps.conf") {
+		my $scmd = "sed -r -e 's/VE_ROOT=.*/VE_ROOT=\\\"$qroot\\\"/' -e 's/VE_PRIVATE=.*/VE_PRIVATE=\\\"$qprivate\\\"/' -e 's/host_ifname=veth[0-9]+\./host_ifname=veth${vmid}./' <'$private/etc/vzdump/vps.conf' >'$conffile'";
 
-	run_command ($scmd);
+		run_command ($scmd);
 
-	foreach my $s (PVE::VZDump::OpenVZ::SCRIPT_EXT) {
-	    my $tfn = "$cfgdir/${vmid}.$s";
-	    my $sfn = "$private/etc/vzdump/vps.$s";
-	    if (-f $sfn) {
-		run_command ("cp '$sfn' '$tfn'");
-	    }
+		foreach my $s (PVE::VZDump::OpenVZ::SCRIPT_EXT) {
+			my $tfn = "$cfgdir/${vmid}.$s";
+			my $sfn = "$private/etc/vzdump/vps.$s";
+			if (-f $sfn) {
+			run_command ("cp '$sfn' '$tfn'");
+			}
+		}
+
+		rmtree "$private/etc/vzdump";
 	}
-
-	rmtree "$private/etc/vzdump";
     };
 
     my $err = $@;
