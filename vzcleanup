@@ -1,0 +1,7 @@
+#!/bin/bash
+
+VEID=
+
+. /etc/vz/vz.conf
+
+find $VE_PRIVATE  -maxdepth 1 -name \*_dup -atime +7 -exec rm -rf {} \;
