@@ -28,6 +28,7 @@ use strict;
 use Getopt::Long;
 use Sys::Syslog;
 use File::Path;
+use File::Copy;
 use PVE::VZDump;
 use PVE::VZDump::OpenVZ;
 use PVE::VZDup;
@@ -105,6 +106,8 @@ sub restore_openvz {
 #	my $cmd = "tar xpf $archive --totals --sparse -C $private";
 	my $cmd = "duplicity --no-encryption -v4 --restore-time $restoretime $archive $private";
 	debugmsg ('info', "executing $cmd");
+
+	move($private, $private . '_dup');
 
 
 	if ($archive eq '-') {
