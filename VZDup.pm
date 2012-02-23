@@ -1100,7 +1100,7 @@ else {
     my $cmd = "(";
 #    $cmd .= "duplicity cleanup $dupopts $opts->{destination};";
 #    $cmd .= "duplicity $dupopts --encrypt-key $opts->{key} $snapdir $opts->{destination}";
-    $cmd .= "duplicity --num-retries 20 --allow-source-mismatch $dupopts $snapdir $opts->{destination}/$vmid";
+    $cmd .= "duplicity --num-retries 20 --allow-source-mismatch --archive-dir=$opts->{tmpdir} $dupopts $snapdir $opts->{destination}/$vmid";
 
     $cmd .= ")";
     
