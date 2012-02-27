@@ -288,6 +288,7 @@ sub read_vzdup_defaults {
 	volsize => 25,
 	verbosity => 4,
 	fullifolderthan => '1W',
+	tmpdir => '/tmp',
 #	maxfiles => 1, 
     };
 

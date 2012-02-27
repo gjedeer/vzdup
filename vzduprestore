@@ -104,7 +104,8 @@ sub restore_openvz {
 	mkpath $root || die "unable to create private dir '$private'";
 
 #	my $cmd = "tar xpf $archive --totals --sparse -C $private";
-	my $cmd = "duplicity --no-encryption -v4 --restore-time $restoretime $archive $private";
+	my $tmpdir = PVE::VZDup::read_vzdup_defaults()->{tmpdir}
+	my $cmd = "duplicity --no-encryption -v4 --restore-time --archive-dir=$tmpdir $restoretime $archive $private";
 	debugmsg ('info', "executing $cmd");
 
 	if(-d $private)
