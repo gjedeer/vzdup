@@ -1023,7 +1023,7 @@ sub exec_backup {
     my $tasklist = [];
 
     if ($opts->{all}) {
-		print Dumper($self->{plugins});
+#		print Dumper($self->{plugins});
 	foreach my $plugin (@{$self->{plugins}}) {
 	    my $vmlist = $plugin->vmlist();
 	    foreach my $vmid (sort @$vmlist) {
