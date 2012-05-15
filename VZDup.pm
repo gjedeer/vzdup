@@ -36,8 +36,16 @@ use IPC::Open3;
 use POSIX qw(strftime);
 use File::Path;
 use PVE::VZDump::OpenVZ;
+use PVE::RPCEnvironment;
 use Time::localtime;
 use Time::Local;
+
+my $rpcenv = PVE::RPCEnvironment->init('cli');
+
+$rpcenv->init_request();
+$rpcenv->set_language($ENV{LANG});
+$rpcenv->set_user('root@pam');
+
 
 my @posix_filesystems = qw(ext3 ext4 nfs nfs4 reiserfs xfs);
 
@@ -1015,6 +1023,7 @@ sub exec_backup {
     my $tasklist = [];
 
     if ($opts->{all}) {
+		print Dumper($self->{plugins});
 	foreach my $plugin (@{$self->{plugins}}) {
 	    my $vmlist = $plugin->vmlist();
 	    foreach my $vmid (sort @$vmlist) {
